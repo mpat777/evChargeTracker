@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 const GITHUB_FILE = "data/tracker.json";
 const LOCAL_TOKEN_KEY = "ev-gh-token";
 const LOCAL_USER_KEY = "ev-default-user";
+const LOCAL_NAMES_KEY = "ev-user-names";
 
 // ─── GitHub DB ───
 class GitHubDB {
@@ -180,11 +181,17 @@ export default function LadeTracker() {
   const [lastSync, setLastSync] = useState(null);
   const [showSet, setShowSet] = useState(false);
   const saveTimer = useRef(null);
-  const savedUser = localStorage.getItem(LOCAL_USER_KEY) || "Patrick";
+  const [userNames, setUserNames] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LOCAL_NAMES_KEY)) || ["Patrick","Eveline"]; } catch { return ["Patrick","Eveline"]; }
+  });
+  const [editingNames, setEditingNames] = useState(false);
+  const [nameInputs, setNameInputs] = useState(["",""]);
+  const savedUser = localStorage.getItem(LOCAL_USER_KEY) || userNames[0];
   const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:"" });
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [formError, setFormError] = useState("");
   const [editId, setEditId] = useState(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
   const DEFAULT_LOCATIONS = ["Zu Hause", "Migros", "Coop", "Lidl", "Tesla Supercharger"];
 
   // Last km for pre-fill
@@ -193,6 +200,24 @@ export default function LadeTracker() {
     const sorted = [...entries].sort((a,b) => b.km - a.km);
     return sorted[0].km;
   }, [entries]);
+
+  // ─── Auto-update check ───
+  useEffect(() => {
+    const STORED_VERSION_KEY = "ev-app-version";
+    const checkUpdate = async () => {
+      try {
+        const res = await fetch("version.json?t=" + Date.now());
+        if (!res.ok) return;
+        const data = await res.json();
+        const current = localStorage.getItem(STORED_VERSION_KEY);
+        if (!current) { localStorage.setItem(STORED_VERSION_KEY, data.version); return; }
+        if (data.version !== current) { setUpdateAvailable(true); }
+      } catch {}
+    };
+    checkUpdate();
+    const interval = setInterval(checkUpdate, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const s = localStorage.getItem(LOCAL_TOKEN_KEY);
@@ -311,6 +336,45 @@ export default function LadeTracker() {
         {showSet && (
           <div style={{ marginTop:12,background:C.card,borderRadius:14,padding:16,border:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:10 }}>
             {lastSync && <p style={{ fontSize:11,color:C.textDim,margin:0 }}>Letzte Sync: {lastSync.toLocaleTimeString("de-DE")}</p>}
+
+            <p style={{ fontSize:12,fontWeight:600,color:C.textDim,margin:"8px 0 0",textTransform:"uppercase",letterSpacing:"0.05em" }}>Benutzer</p>
+            {!editingNames ? (
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:10,background:C.input,borderRadius:10 }}>
+                <span style={{ fontSize:14,fontWeight:500 }}>{userNames.join(" & ")}</span>
+                <button onClick={()=>{setNameInputs([...userNames]);setEditingNames(true);}} style={{ border:"none",background:"transparent",cursor:"pointer",padding:4 }}>
+                  <I d={ic.edit} s={16} c={C.blue} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+                {nameInputs.map((n,i) => (
+                  <input key={i} type="text" value={n} placeholder={`Person ${i+1}`}
+                    onChange={e=>{const u=[...nameInputs];u[i]=e.target.value;setNameInputs(u);}}
+                    style={inp} />
+                ))}
+                {nameInputs.length < 4 && (
+                  <button onClick={()=>setNameInputs([...nameInputs,""])} style={{ padding:8,border:`1px dashed ${C.border}`,borderRadius:8,background:"transparent",color:C.textDim,fontSize:12,fontFamily:font,cursor:"pointer" }}>
+                    + Weitere Person
+                  </button>
+                )}
+                <div style={{ display:"flex",gap:8 }}>
+                  <button onClick={()=>{
+                    const names = nameInputs.map(n=>n.trim()).filter(Boolean);
+                    if (names.length < 1) return;
+                    setUserNames(names);
+                    localStorage.setItem(LOCAL_NAMES_KEY, JSON.stringify(names));
+                    if (!names.includes(form.user)) setForm({...form, user: names[0]});
+                    setEditingNames(false);
+                  }} style={{ flex:1,padding:10,border:"none",borderRadius:10,background:C.accent,color:"#000",fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:700 }}>
+                    Speichern
+                  </button>
+                  <button onClick={()=>setEditingNames(false)} style={{ padding:10,border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
+                    Abbrechen
+                  </button>
+                </div>
+              </div>
+            )}
+
             <p style={{ fontSize:12,fontWeight:600,color:C.textDim,margin:"8px 0 0",textTransform:"uppercase",letterSpacing:"0.05em" }}>Backup</p>
             <button onClick={()=>exportJSON(entries,locations)} style={{ padding:10,border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.text,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
               <I d={ic.download} s={16} c={C.accent} /> Backup herunterladen (JSON)
@@ -349,6 +413,16 @@ export default function LadeTracker() {
         )}
       </div>
 
+      {/* Update Banner */}
+      {updateAvailable && (
+        <div style={{ margin:"0 20px 12px",padding:"12px 16px",background:"rgba(91,141,239,0.12)",border:`1px solid rgba(91,141,239,0.3)`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10 }}>
+          <span style={{ fontSize:13,color:C.blue,fontWeight:600 }}>Neue Version verfügbar</span>
+          <button onClick={()=>{localStorage.setItem("ev-app-version","updating");window.location.reload();}} style={{ padding:"8px 14px",border:"none",borderRadius:8,background:C.blue,color:"#fff",fontSize:12,fontWeight:700,fontFamily:font,cursor:"pointer",whiteSpace:"nowrap" }}>
+            Jetzt aktualisieren
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display:"flex",gap:4,marginInline:20,borderRadius:14,padding:4,background:C.card,marginBottom:20 }}>
         {[{id:"list",l:"Übersicht",i:ic.car},{id:"add",l:"Eintragen",i:ic.plus},{id:"stats",l:"Statistik",i:ic.chart}].map(t=>(
@@ -373,7 +447,7 @@ export default function LadeTracker() {
             <div>
               <label style={lbl}>Wer lädt?</label>
               <div style={{ display:"flex",gap:8 }}>
-                {["Patrick","Eveline"].map(u=>(
+                {userNames.map(u=>(
                   <button key={u} onClick={()=>setForm({...form,user:u})} style={{
                     flex:1,padding:12,border:`2px solid ${form.user===u?C.accent:C.border}`,borderRadius:12,
                     background:form.user===u?C.accentGlow:"transparent",color:form.user===u?C.accent:C.textDim,
@@ -469,7 +543,7 @@ export default function LadeTracker() {
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                       <div>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                          <span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:6,background:e.user==="Patrick"?C.accentGlow:"rgba(91,141,239,0.12)",color:e.user==="Patrick"?C.accent:C.blue}}>{e.user}</span>
+                          <span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:6,background:e.user===userNames[0]?C.accentGlow:"rgba(91,141,239,0.12)",color:e.user===userNames[0]?C.accent:C.blue}}>{e.user}</span>
                           <span style={{fontSize:12,color:C.textDim}}>{new Date(e.date).toLocaleDateString("de-DE",{day:"2-digit",month:"short",year:"numeric"})}</span>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:C.textDim}}><I d={ic.map} s={13} c={C.textDim} />{e.location}</div>
