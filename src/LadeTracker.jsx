@@ -85,7 +85,7 @@ const font = "'DM Sans', 'Segoe UI', system-ui, sans-serif";
 const mono = "'JetBrains Mono', 'Fira Code', monospace";
 
 function exportCSV(entries) {
-  const h = "Datum;Benutzer;Kilometerstand;kWh;Preis (€);€/kWh;Ladestation;Notizen";
+  const h = "Datum;Benutzer;Kilometerstand;kWh;Preis (CHF);CHF/kWh;Ladestation;Notizen";
   const r = entries.map(e => [e.date,e.user,e.km,e.kwh.toFixed(1),e.price.toFixed(2),e.pricePerKwh.toFixed(2),`"${e.location}"`,`"${e.notes||""}"`].join(";"));
   const blob = new Blob(["\uFEFF"+[h,...r].join("\n")], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
@@ -116,7 +116,7 @@ function Setup({ onDone }) {
           <div style={{ width:64,height:64,borderRadius:20,margin:"0 auto 16px",background:`linear-gradient(135deg,${C.accent},${C.accentDim})`,display:"flex",alignItems:"center",justifyContent:"center" }}>
             <I d={ic.bolt} s={32} c="#fff" />
           </div>
-          <h1 style={{ margin:0, fontSize:24, fontWeight:800 }}>Lade-Tracker</h1>
+          <h1 style={{ margin:0, fontSize:24, fontWeight:800 }}>evChargeTracker</h1>
           <p style={{ color:C.textDim, fontSize:14, marginTop:8 }}>Einmalige Einrichtung</p>
         </div>
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -221,8 +221,10 @@ export default function LadeTracker() {
   const [lastSync, setLastSync] = useState(null);
   const [showSet, setShowSet] = useState(false);
   const saveTimer = useRef(null);
-  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:"Ich",date:new Date().toISOString().slice(0,10),notes:"" });
+  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:"" });
   const [showNewLoc, setShowNewLoc] = useState(false);
+  const [formError, setFormError] = useState("");
+  const DEFAULT_LOCATIONS = ["Zu Hause", "Migros", "Coop", "Lidl", "Tesla Supercharger"];
 
   useEffect(() => {
     const s = localStorage.getItem(LOCAL_TOKEN_KEY);
@@ -252,8 +254,14 @@ export default function LadeTracker() {
 
   const addEntry = () => {
     const loc = showNewLoc ? form.newLocation.trim() : form.location;
-    if (!form.km||!form.kwh||!form.price||!loc) return;
-    const entry = { id:Date.now(), km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:parseFloat(form.price), location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:parseFloat(form.price)/parseFloat(form.kwh) };
+    const missing = [];
+    if (!form.km) missing.push("Kilometerstand");
+    if (!form.kwh) missing.push("kWh");
+    if (!loc) missing.push("Ladestation");
+    if (missing.length > 0) { setFormError("Bitte ausfüllen: " + missing.join(", ")); return; }
+    setFormError("");
+    const priceVal = form.price ? parseFloat(form.price) : 0;
+    const entry = { id:Date.now(), km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:priceVal, location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:priceVal > 0 ? priceVal/parseFloat(form.kwh) : 0 };
     let nl = locations;
     if (!locations.includes(loc)) { nl=[...locations,loc].sort(); setLocations(nl); }
     const ne = [entry,...entries]; setEntries(ne); dSave(ne,nl);
@@ -288,7 +296,7 @@ export default function LadeTracker() {
               <I d={ic.bolt} s={22} c="#fff" />
             </div>
             <div>
-              <h1 style={{ margin:0,fontSize:22,fontWeight:800,letterSpacing:"-0.02em" }}>Lade-Tracker</h1>
+              <h1 style={{ margin:0,fontSize:22,fontWeight:800,letterSpacing:"-0.02em" }}>evChargeTracker</h1>
               <div style={{ display:"flex",alignItems:"center",gap:6 }}>
                 <p style={{ margin:0,fontSize:12,color:C.textDim }}>{entries.length} Ladevorgänge</p>
                 {saving && <span style={{ fontSize:10,color:C.orange }}>speichert...</span>}
@@ -341,7 +349,7 @@ export default function LadeTracker() {
             <div>
               <label style={lbl}>Wer lädt?</label>
               <div style={{ display:"flex",gap:8 }}>
-                {["Ich","Partnerin"].map(u=>(
+                {["Patrick","Eveline"].map(u=>(
                   <button key={u} onClick={()=>setForm({...form,user:u})} style={{
                     flex:1,padding:12,border:`2px solid ${form.user===u?C.accent:C.border}`,borderRadius:12,
                     background:form.user===u?C.accentGlow:"transparent",color:form.user===u?C.accent:C.textDim,
@@ -354,18 +362,18 @@ export default function LadeTracker() {
             <div><label style={lbl}>Kilometerstand</label><input type="number" inputMode="decimal" placeholder="z.B. 12345" value={form.km} onChange={e=>setForm({...form,km:e.target.value})} style={inp} /></div>
             <div><label style={lbl}>Geladene kWh</label><input type="number" inputMode="decimal" step="0.1" placeholder="z.B. 42.5" value={form.kwh} onChange={e=>setForm({...form,kwh:e.target.value})} style={inp} /></div>
             <div>
-              <label style={lbl}>Bezahlter Preis (€)</label>
-              <input type="number" inputMode="decimal" step="0.01" placeholder="z.B. 18.50" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} style={inp} />
-              {form.kwh&&form.price&&<div style={{marginTop:6,fontSize:13,color:C.accent,fontFamily:mono,fontWeight:500}}>= {(parseFloat(form.price)/parseFloat(form.kwh)).toFixed(2)} €/kWh</div>}
+              <label style={lbl}>Bezahlter Preis in CHF (leer = gratis)</label>
+              <input type="number" inputMode="decimal" step="0.01" placeholder="z.B. 18.50 (leer = gratis)" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} style={inp} />
+              {form.kwh&&form.price&&<div style={{marginTop:6,fontSize:13,color:C.accent,fontFamily:mono,fontWeight:500}}>= {(parseFloat(form.price)/parseFloat(form.kwh)).toFixed(2)} CHF/kWh</div>}
             </div>
             <div>
               <label style={lbl}>Ladestation</label>
-              {!showNewLoc&&locations.length>0 ? (
+              {(()=>{ const allLocs = [...new Set([...DEFAULT_LOCATIONS, ...locations])].sort(); return !showNewLoc ? (
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{position:"relative"}}>
                     <select value={form.location} onChange={e=>setForm({...form,location:e.target.value})} style={{...inp,appearance:"none",WebkitAppearance:"none",paddingRight:40,colorScheme:"dark"}}>
                       <option value="">Ladestation wählen...</option>
-                      {locations.map(l=><option key={l} value={l}>{l}</option>)}
+                      {allLocs.map(l=><option key={l} value={l}>{l}</option>)}
                     </select>
                     <div style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><I d={ic.chevDown} s={18} c={C.textDim} /></div>
                   </div>
@@ -375,12 +383,13 @@ export default function LadeTracker() {
                 </div>
               ) : (
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  <input type="text" placeholder="z.B. ALDI Süd Musterstadt, EnBW A8..." value={form.newLocation} onChange={e=>setForm({...form,newLocation:e.target.value})} style={inp} />
-                  {locations.length>0 && <button onClick={()=>{setShowNewLoc(false);setForm({...form,newLocation:""});}} style={{padding:8,border:"none",borderRadius:8,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer"}}>← Bestehende Station</button>}
+                  <input type="text" placeholder="z.B. Aldi, Shell Recharge..." value={form.newLocation} onChange={e=>setForm({...form,newLocation:e.target.value})} style={inp} />
+                  <button onClick={()=>{setShowNewLoc(false);setForm({...form,newLocation:""});}} style={{padding:8,border:"none",borderRadius:8,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer"}}>← Bestehende Station</button>
                 </div>
-              )}
+              );})()}
             </div>
             <div><label style={lbl}>Notizen (optional)</label><input type="text" placeholder="z.B. DC 150kW..." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} style={inp} /></div>
+            {formError && <div style={{padding:"12px 16px",background:"rgba(244,91,105,0.1)",borderRadius:10,color:C.danger,fontSize:13,fontWeight:500}}>{formError}</div>}
             <button onClick={addEntry} style={btnP}>Ladevorgang speichern</button>
           </div>
         )}
@@ -398,7 +407,7 @@ export default function LadeTracker() {
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {stats && <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-                  {[{l:"Gesamt kWh",v:stats.totalKwh.toFixed(1),u:"kWh"},{l:"Gesamt €",v:stats.totalCost.toFixed(2),u:"€"},{l:"Ø Preis",v:stats.avgPricePerKwh.toFixed(2),u:"€/kWh"}].map((s,i)=>(
+                  {[{l:"Gesamt kWh",v:stats.totalKwh.toFixed(1),u:"kWh"},{l:"Gesamt CHF",v:stats.totalCost.toFixed(2),u:"CHF"},{l:"Ø Preis",v:stats.avgPricePerKwh.toFixed(2),u:"CHF/kWh"}].map((s,i)=>(
                     <div key={i} style={{background:C.card,borderRadius:14,padding:"14px 12px",textAlign:"center",border:`1px solid ${C.border}`}}>
                       <div style={{fontSize:11,color:C.textDim,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>{s.l}</div>
                       <div style={{fontSize:18,fontWeight:800,fontFamily:mono,color:C.accent,marginTop:4}}>{s.v}</div>
@@ -418,7 +427,7 @@ export default function LadeTracker() {
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                       <div>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                          <span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:6,background:e.user==="Ich"?C.accentGlow:"rgba(91,141,239,0.12)",color:e.user==="Ich"?C.accent:C.blue}}>{e.user}</span>
+                          <span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:6,background:e.user==="Patrick"?C.accentGlow:"rgba(91,141,239,0.12)",color:e.user==="Patrick"?C.accent:C.blue}}>{e.user}</span>
                           <span style={{fontSize:12,color:C.textDim}}>{new Date(e.date).toLocaleDateString("de-DE",{day:"2-digit",month:"short",year:"numeric"})}</span>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:C.textDim}}><I d={ic.map} s={13} c={C.textDim} />{e.location}</div>
@@ -428,9 +437,9 @@ export default function LadeTracker() {
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:14,padding:12,background:C.input,borderRadius:12}}>
                       <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>km-Stand</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,marginTop:2}}>{e.km.toLocaleString("de-DE")}</div></div>
                       <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>kWh</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,color:C.accent,marginTop:2}}>{e.kwh.toFixed(1)}</div></div>
-                      <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>Preis</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,color:C.orange,marginTop:2}}>{e.price.toFixed(2)}€</div></div>
+                      <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>Preis</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,color:e.price>0?C.orange:C.accent,marginTop:2}}>{e.price>0?`${e.price.toFixed(2)} CHF`:"Gratis"}</div></div>
                     </div>
-                    <div style={{fontSize:11,color:C.textDim,marginTop:6,fontFamily:mono}}>{e.pricePerKwh.toFixed(2)} €/kWh</div>
+                    <div style={{fontSize:11,color:C.textDim,marginTop:6,fontFamily:mono}}>{e.pricePerKwh>0?`${e.pricePerKwh.toFixed(2)} CHF/kWh`:"Kostenlos geladen"}</div>
                     {e.notes && <div style={{fontSize:12,color:C.textDim,marginTop:6,fontStyle:"italic"}}>{e.notes}</div>}
                   </div>
                 ))}
@@ -446,7 +455,7 @@ export default function LadeTracker() {
               <div style={{display:"flex",flexDirection:"column",gap:16}}>
                 <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Statistiken</h2>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                  {[{l:"Gesamtverbrauch",v:`${stats.totalKwh.toFixed(1)} kWh`,c:C.accent},{l:"Gesamtkosten",v:`${stats.totalCost.toFixed(2)} €`,c:C.orange},{l:"Ø Preis/kWh",v:`${stats.avgPricePerKwh.toFixed(2)} €`,c:C.blue},{l:"Ø Verbrauch",v:stats.consumption>0?`${stats.consumption.toFixed(1)} kWh/100km`:"—",c:C.accent}].map((s,i)=>(
+                  {[{l:"Gesamtverbrauch",v:`${stats.totalKwh.toFixed(1)} kWh`,c:C.accent},{l:"Gesamtkosten",v:`${stats.totalCost.toFixed(2)} CHF`,c:C.orange},{l:"Ø Preis/kWh",v:`${stats.avgPricePerKwh.toFixed(2)} CHF`,c:C.blue},{l:"Ø Verbrauch",v:stats.consumption>0?`${stats.consumption.toFixed(1)} kWh/100km`:"—",c:C.accent}].map((s,i)=>(
                     <div key={i} style={{background:C.card,borderRadius:16,padding:"18px 16px",border:`1px solid ${C.border}`}}>
                       <div style={{fontSize:11,color:C.textDim,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>{s.l}</div>
                       <div style={{fontSize:20,fontWeight:800,fontFamily:mono,color:s.c,marginTop:8}}>{s.v}</div>
@@ -463,7 +472,7 @@ export default function LadeTracker() {
                             <div style={{width:52,fontSize:12,fontFamily:mono,color:C.textDim,flexShrink:0}}>{new Date(m+"-01").toLocaleDateString("de-DE",{month:"short",year:"2-digit"})}</div>
                             <div style={{flex:1,height:28,background:C.input,borderRadius:6,overflow:"hidden"}}>
                               <div style={{height:"100%",borderRadius:6,width:`${(d.cost/mx)*100}%`,background:`linear-gradient(90deg,${C.accent},${C.accentDim})`,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:8,minWidth:50}}>
-                                <span style={{fontSize:11,fontWeight:700,fontFamily:mono,color:"#000"}}>{d.cost.toFixed(0)}€</span>
+                                <span style={{fontSize:11,fontWeight:700,fontFamily:mono,color:"#000"}}>{d.cost.toFixed(0)} CHF</span>
                               </div>
                             </div>
                             <div style={{fontSize:11,color:C.textDim,fontFamily:mono,width:60,textAlign:"right"}}>{d.kwh.toFixed(0)} kWh</div>

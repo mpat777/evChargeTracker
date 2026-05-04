@@ -1,7 +1,7 @@
 {
-  "name": "Lade-Tracker",
-  "short_name": "Laden",
-  "description": "E-Auto Lade-Tracker",
+  "name": "evChargeTracker",
+  "short_name": "evCharge",
+  "description": "E-Auto Charge Tracker",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0F1117",
