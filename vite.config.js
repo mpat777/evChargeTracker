@@ -5,5 +5,5 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   // GitHub Pages: replace 'lade-tracker' with your repo name
-  base: '/lade-tracker/',
+  base: '/evChargeTracker/',
 })
