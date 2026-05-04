@@ -72,6 +72,7 @@ const ic = {
   lock: "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
   settings: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z",
   refresh: "M23 4v6h-6M1 20v-6h6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15",
+  edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
   eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 9a3 3 0 100 6 3 3 0 000-6z",
   eyeOff: "M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22",
 };
@@ -224,7 +225,15 @@ export default function LadeTracker() {
   const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:"" });
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [formError, setFormError] = useState("");
+  const [editId, setEditId] = useState(null);
   const DEFAULT_LOCATIONS = ["Zu Hause", "Migros", "Coop", "Lidl", "Tesla Supercharger"];
+
+  // Last km for pre-fill
+  const lastKm = useMemo(() => {
+    if (!entries.length) return null;
+    const sorted = [...entries].sort((a,b) => b.km - a.km);
+    return sorted[0].km;
+  }, [entries]);
 
   useEffect(() => {
     const s = localStorage.getItem(LOCAL_TOKEN_KEY);
@@ -261,12 +270,36 @@ export default function LadeTracker() {
     if (missing.length > 0) { setFormError("Bitte ausfüllen: " + missing.join(", ")); return; }
     setFormError("");
     const priceVal = form.price ? parseFloat(form.price) : 0;
-    const entry = { id:Date.now(), km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:priceVal, location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:priceVal > 0 ? priceVal/parseFloat(form.kwh) : 0 };
+    const entryData = { km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:priceVal, location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:priceVal > 0 ? priceVal/parseFloat(form.kwh) : 0 };
+
     let nl = locations;
     if (!locations.includes(loc)) { nl=[...locations,loc].sort(); setLocations(nl); }
-    const ne = [entry,...entries]; setEntries(ne); dSave(ne,nl);
-    setForm({km:"",kwh:"",price:"",location:loc,newLocation:"",user:form.user,date:new Date().toISOString().slice(0,10),notes:""});
+
+    let ne;
+    if (editId) {
+      ne = entries.map(e => e.id === editId ? { ...e, ...entryData } : e);
+      setEditId(null);
+    } else {
+      ne = [{ id:Date.now(), ...entryData }, ...entries];
+    }
+    setEntries(ne); dSave(ne, nl);
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:""});
     setShowNewLoc(false); setView("list");
+  };
+
+  const startEdit = (e) => {
+    setForm({ km:String(e.km), kwh:String(e.kwh), price:e.price>0?String(e.price):"", location:e.location, newLocation:"", user:e.user, date:e.date, notes:e.notes||"" });
+    setEditId(e.id);
+    setShowNewLoc(false);
+    setFormError("");
+    setView("add");
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:""});
+    setFormError("");
+    setView("list");
   };
 
   const delEntry = (id) => { const ne=entries.filter(e=>e.id!==id); setEntries(ne); dSave(ne,locations); setDelId(null); };
@@ -342,10 +375,13 @@ export default function LadeTracker() {
 
       <div style={{ padding:"0 20px" }}>
 
-        {/* ADD */}
+        {/* ADD / EDIT */}
         {view==="add" && (
           <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
-            <h2 style={{ fontSize:18,fontWeight:700,margin:0 }}>Neuer Ladevorgang</h2>
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+              <h2 style={{ fontSize:18,fontWeight:700,margin:0 }}>{editId ? "Eintrag bearbeiten" : "Neuer Ladevorgang"}</h2>
+              {editId && <button onClick={cancelEdit} style={{ border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.textDim,fontSize:12,fontFamily:font,cursor:"pointer",padding:"8px 12px",fontWeight:600 }}>Abbrechen</button>}
+            </div>
             <div>
               <label style={lbl}>Wer lädt?</label>
               <div style={{ display:"flex",gap:8 }}>
@@ -359,7 +395,25 @@ export default function LadeTracker() {
               </div>
             </div>
             <div><label style={lbl}>Datum</label><input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} style={{...inp,colorScheme:"dark"}} /></div>
-            <div><label style={lbl}>Kilometerstand</label><input type="number" inputMode="decimal" placeholder="z.B. 12345" value={form.km} onChange={e=>setForm({...form,km:e.target.value})} style={inp} /></div>
+            <div>
+              <label style={lbl}>Kilometerstand</label>
+              <input type="number" inputMode="decimal" placeholder={lastKm ? `Letzter: ${lastKm.toLocaleString("de-CH")} km` : "z.B. 12345"} value={form.km} onChange={e=>setForm({...form,km:e.target.value})} style={inp} />
+              {lastKm && !editId && (
+                <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                  <button onClick={()=>setForm({...form,km:String(lastKm)})} style={{padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:8,background:C.card,color:C.text,fontSize:12,fontFamily:mono,fontWeight:600,cursor:"pointer"}}>
+                    = {lastKm.toLocaleString("de-CH")}
+                  </button>
+                  {[50,100,200,500].map(d=>(
+                    <button key={d} onClick={()=>setForm({...form,km:String(lastKm+d)})} style={{padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:8,background:C.card,color:C.accent,fontSize:12,fontFamily:mono,fontWeight:600,cursor:"pointer"}}>
+                      +{d}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {lastKm && form.km && parseFloat(form.km) > lastKm && (
+                <div style={{marginTop:6,fontSize:13,color:C.blue,fontFamily:mono,fontWeight:500}}>+ {(parseFloat(form.km) - lastKm).toLocaleString("de-CH")} km seit letztem Laden</div>
+              )}
+            </div>
             <div><label style={lbl}>Geladene kWh</label><input type="number" inputMode="decimal" step="0.1" placeholder="z.B. 42.5" value={form.kwh} onChange={e=>setForm({...form,kwh:e.target.value})} style={inp} /></div>
             <div>
               <label style={lbl}>Bezahlter Preis in CHF (leer = gratis)</label>
@@ -390,7 +444,7 @@ export default function LadeTracker() {
             </div>
             <div><label style={lbl}>Notizen (optional)</label><input type="text" placeholder="z.B. DC 150kW..." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} style={inp} /></div>
             {formError && <div style={{padding:"12px 16px",background:"rgba(244,91,105,0.1)",borderRadius:10,color:C.danger,fontSize:13,fontWeight:500}}>{formError}</div>}
-            <button onClick={addEntry} style={btnP}>Ladevorgang speichern</button>
+            <button onClick={addEntry} style={btnP}>{editId ? "Änderungen speichern" : "Ladevorgang speichern"}</button>
           </div>
         )}
 
@@ -416,12 +470,12 @@ export default function LadeTracker() {
                   ))}
                 </div>}
                 {entries.map(e=>(
-                  <div key={e.id} style={{background:C.card,borderRadius:16,padding:16,border:`1px solid ${C.border}`,position:"relative"}}>
+                  <div key={e.id} onClick={()=>{ if(delId!==e.id) startEdit(e); }} style={{background:C.card,borderRadius:16,padding:16,border:`1px solid ${C.border}`,position:"relative",cursor:"pointer"}}>
                     {delId===e.id && <div style={{position:"absolute",inset:0,background:"rgba(15,17,23,0.92)",borderRadius:16,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,zIndex:2}}>
                       <p style={{fontSize:14,color:C.text,margin:0}}>Wirklich löschen?</p>
                       <div style={{display:"flex",gap:10}}>
-                        <button onClick={()=>delEntry(e.id)} style={{padding:"10px 20px",border:"none",borderRadius:10,background:C.danger,color:"#fff",fontSize:13,fontWeight:700,fontFamily:font,cursor:"pointer"}}>Ja</button>
-                        <button onClick={()=>setDelId(null)} style={{padding:"10px 20px",border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer"}}>Nein</button>
+                        <button onClick={(ev)=>{ev.stopPropagation();delEntry(e.id);}} style={{padding:"10px 20px",border:"none",borderRadius:10,background:C.danger,color:"#fff",fontSize:13,fontWeight:700,fontFamily:font,cursor:"pointer"}}>Ja</button>
+                        <button onClick={(ev)=>{ev.stopPropagation();setDelId(null);}} style={{padding:"10px 20px",border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer"}}>Nein</button>
                       </div>
                     </div>}
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -432,7 +486,10 @@ export default function LadeTracker() {
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:C.textDim}}><I d={ic.map} s={13} c={C.textDim} />{e.location}</div>
                       </div>
-                      <button onClick={()=>setDelId(e.id)} style={{border:"none",background:"transparent",cursor:"pointer",padding:6,opacity:0.4}}><I d={ic.trash} s={16} c={C.danger} /></button>
+                      <div style={{display:"flex",gap:4}}>
+                        <button onClick={(ev)=>{ev.stopPropagation();startEdit(e);}} style={{border:"none",background:"transparent",cursor:"pointer",padding:6,opacity:0.4}}><I d={ic.edit} s={16} c={C.blue} /></button>
+                        <button onClick={(ev)=>{ev.stopPropagation();setDelId(e.id);}} style={{border:"none",background:"transparent",cursor:"pointer",padding:6,opacity:0.4}}><I d={ic.trash} s={16} c={C.danger} /></button>
+                      </div>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:14,padding:12,background:C.input,borderRadius:12}}>
                       <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>km-Stand</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,marginTop:2}}>{e.km.toLocaleString("de-DE")}</div></div>
