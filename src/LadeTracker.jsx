@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 
 const GITHUB_FILE = "data/tracker.json";
 const LOCAL_TOKEN_KEY = "ev-gh-token";
-const LOCAL_PIN_KEY = "ev-pin-session";
+const LOCAL_USER_KEY = "ev-default-user";
 
 // ─── GitHub DB ───
 class GitHubDB {
@@ -75,6 +75,8 @@ const ic = {
   edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
   eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 9a3 3 0 100 6 3 3 0 000-6z",
   eyeOff: "M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22",
+  upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
+  save: "M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2zM17 21v-8H7v8M7 3v5h8",
 };
 
 const C = {
@@ -90,7 +92,29 @@ function exportCSV(entries) {
   const r = entries.map(e => [e.date,e.user,e.km,e.kwh.toFixed(1),e.price.toFixed(2),e.pricePerKwh.toFixed(2),`"${e.location}"`,`"${e.notes||""}"`].join(";"));
   const blob = new Blob(["\uFEFF"+[h,...r].join("\n")], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = `lade-tracker-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+  a.download = `evChargeTracker-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+function exportJSON(entries, locations) {
+  const data = { exportDate: new Date().toISOString(), entries, locations };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = `evChargeTracker-backup-${new Date().toISOString().slice(0,10)}.json`; a.click();
+}
+
+function importJSON(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data.entries || !Array.isArray(data.entries)) { reject("Ungültige Backup-Datei"); return; }
+        resolve({ entries: data.entries, locations: data.locations || [] });
+      } catch { reject("Datei konnte nicht gelesen werden"); }
+    };
+    reader.onerror = () => reject("Lesefehler");
+    reader.readAsText(file);
+  });
 }
 
 const inp = { width:"100%", padding:"14px 16px", background:C.input, border:`1px solid ${C.border}`, borderRadius:12, color:C.text, fontSize:16, fontFamily:font, outline:"none", boxSizing:"border-box" };
@@ -144,76 +168,10 @@ function Setup({ onDone }) {
   );
 }
 
-// ═══ PIN ═══
-function Pin({ db, isNew, onUnlock }) {
-  const [pin, setPin] = useState(""); const [confirm, setConfirm] = useState("");
-  const [step, setStep] = useState(isNew?"create":"enter"); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
-
-  const handleKey = (n) => {
-    const setter = step==="confirm"?setConfirm:setPin;
-    const val = step==="confirm"?confirm:pin;
-    if (n==="⌫") setter(val.slice(0,-1));
-    else if (val.length<6) setter(val+n);
-    setErr("");
-  };
-  const go = async () => {
-    if (step==="create") { if(pin.length<4){setErr("Mind. 4 Stellen");return;} setStep("confirm"); setConfirm(""); setErr(""); return; }
-    if (step==="confirm") {
-      if(confirm!==pin){setErr("PINs stimmen nicht überein");setConfirm("");return;}
-      setBusy(true); const data={pin,entries:[],locations:[]};
-      const ok=await db.write(data); setBusy(false);
-      if(ok){sessionStorage.setItem(LOCAL_PIN_KEY,"1");onUnlock(data);}else{setErr("Speicherfehler");}
-      return;
-    }
-    setBusy(true); const data=await db.read(); setBusy(false);
-    if(!data){setErr("Keine Daten gefunden");return;}
-    if(data.pin!==pin){setErr("Falscher PIN");setPin("");return;}
-    sessionStorage.setItem(LOCAL_PIN_KEY,"1"); onUnlock(data);
-  };
-  const val = step==="confirm"?confirm:pin;
-
-  return (
-    <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:font, color:C.text, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-      <div style={{ maxWidth:340, width:"100%", textAlign:"center" }}>
-        <div style={{ width:56,height:56,borderRadius:16,margin:"0 auto 20px",background:C.accentGlow,border:`2px solid ${C.accent}`,display:"flex",alignItems:"center",justifyContent:"center" }}>
-          <I d={ic.lock} s={28} c={C.accent} />
-        </div>
-        <h2 style={{ margin:"0 0 4px", fontSize:20, fontWeight:800 }}>
-          {step==="create"?"PIN festlegen":step==="confirm"?"PIN bestätigen":"PIN eingeben"}
-        </h2>
-        <p style={{ color:C.textDim, fontSize:13, margin:"0 0 8px" }}>
-          {step==="create"?"Mindestens 4 Stellen":step==="confirm"?"Nochmal eingeben":"Zum Entsperren"}
-        </p>
-        <div style={{ display:"flex", gap:10, justifyContent:"center", margin:"24px 0" }}>
-          {Array.from({length:6}).map((_,i) => (
-            <div key={i} style={{ width:16,height:16,borderRadius:"50%",background:i<val.length?C.accent:C.border,transition:"all 0.15s" }} />
-          ))}
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, maxWidth:260, margin:"0 auto" }}>
-          {[1,2,3,4,5,6,7,8,9,null,0,"⌫"].map((n,i) => (
-            <button key={i} onClick={()=>n!==null&&handleKey(String(n))} style={{
-              aspectRatio:"1.4", border:"none", borderRadius:14,
-              background:n===null?"transparent":C.card,
-              color:n==="⌫"?C.textDim:C.text, fontSize:n==="⌫"?20:22,
-              fontWeight:700, fontFamily:font, cursor:n===null?"default":"pointer",
-              display:"flex", alignItems:"center", justifyContent:"center",
-            }}>{n!==null?n:""}</button>
-          ))}
-        </div>
-        {err && <div style={{ marginTop:16, color:C.danger, fontSize:13 }}>{err}</div>}
-        <button onClick={go} disabled={busy||val.length<4} style={{...btnP,marginTop:24,opacity:busy||val.length<4?0.4:1}}>
-          {busy?"...":step==="create"?"Weiter":step==="confirm"?"PIN speichern":"Entsperren"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ═══ MAIN ═══
 export default function LadeTracker() {
   const [state, setState] = useState("loading");
   const [db, setDb] = useState(null);
-  const [isNew, setIsNew] = useState(false);
   const [entries, setEntries] = useState([]);
   const [locations, setLocations] = useState([]);
   const [view, setView] = useState("list");
@@ -222,7 +180,8 @@ export default function LadeTracker() {
   const [lastSync, setLastSync] = useState(null);
   const [showSet, setShowSet] = useState(false);
   const saveTimer = useRef(null);
-  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:"" });
+  const savedUser = localStorage.getItem(LOCAL_USER_KEY) || "Patrick";
+  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:"" });
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [formError, setFormError] = useState("");
   const [editId, setEditId] = useState(null);
@@ -241,16 +200,17 @@ export default function LadeTracker() {
     try {
       const {token,repo} = JSON.parse(s);
       const d = new GitHubDB(token,repo); setDb(d);
-      if (sessionStorage.getItem(LOCAL_PIN_KEY)) {
-        d.read().then(data => { if(data){setEntries(data.entries||[]);setLocations(data.locations||[]);setLastSync(new Date());setState("app");}else{setIsNew(true);setState("pin");} });
-      } else { d.read().then(data=>{setIsNew(!data);setState("pin");}); }
+      d.read().then(data => {
+        if (data) { setEntries(data.entries||[]); setLocations(data.locations||[]); }
+        setLastSync(new Date());
+        setState("app");
+      });
     } catch { setState("setup"); }
   }, []);
 
   const saveGH = useCallback(async (e, l) => {
     if(!db) return; setSaving(true);
-    const cur = await db.read(); const pin = cur?.pin||"";
-    await db.write({pin, entries:e, locations:l});
+    await db.write({entries:e, locations:l});
     setLastSync(new Date()); setSaving(false);
   }, [db]);
 
@@ -283,7 +243,8 @@ export default function LadeTracker() {
       ne = [{ id:Date.now(), ...entryData }, ...entries];
     }
     setEntries(ne); dSave(ne, nl);
-    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:""});
+    localStorage.setItem(LOCAL_USER_KEY, form.user);
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:form.user,date:new Date().toISOString().slice(0,10),notes:""});
     setShowNewLoc(false); setView("list");
   };
 
@@ -297,7 +258,7 @@ export default function LadeTracker() {
 
   const cancelEdit = () => {
     setEditId(null);
-    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:"Patrick",date:new Date().toISOString().slice(0,10),notes:""});
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:""});
     setFormError("");
     setView("list");
   };
@@ -316,8 +277,7 @@ export default function LadeTracker() {
   }, [entries]);
 
   if (state==="loading") return <div style={{minHeight:"100dvh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:C.accent,fontSize:18,fontFamily:font}}>Laden...</div></div>;
-  if (state==="setup") return <Setup onDone={(t,r)=>{const d=new GitHubDB(t,r);setDb(d);d.read().then(data=>{setIsNew(!data);setState("pin");});}} />;
-  if (state==="pin") return <Pin db={db} isNew={isNew} onUnlock={d=>{setEntries(d.entries||[]);setLocations(d.locations||[]);setLastSync(new Date());setState("app");}} />;
+  if (state==="setup") return <Setup onDone={(t,r)=>{const d=new GitHubDB(t,r);setDb(d);d.read().then(data=>{if(data){setEntries(data.entries||[]);setLocations(data.locations||[]);}setLastSync(new Date());setState("app");});}} />;
 
   return (
     <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:font, color:C.text, maxWidth:480, margin:"0 auto", paddingBottom:100 }}>
@@ -351,10 +311,38 @@ export default function LadeTracker() {
         {showSet && (
           <div style={{ marginTop:12,background:C.card,borderRadius:14,padding:16,border:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:10 }}>
             {lastSync && <p style={{ fontSize:11,color:C.textDim,margin:0 }}>Letzte Sync: {lastSync.toLocaleTimeString("de-DE")}</p>}
-            <button onClick={()=>{sessionStorage.removeItem(LOCAL_PIN_KEY);setState("pin");setIsNew(false);}} style={{ padding:10,border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.textDim,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
-              Sperren (PIN erneut eingeben)
+            <p style={{ fontSize:12,fontWeight:600,color:C.textDim,margin:"8px 0 0",textTransform:"uppercase",letterSpacing:"0.05em" }}>Backup</p>
+            <button onClick={()=>exportJSON(entries,locations)} style={{ padding:10,border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.text,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
+              <I d={ic.download} s={16} c={C.accent} /> Backup herunterladen (JSON)
             </button>
-            <button onClick={()=>{localStorage.removeItem(LOCAL_TOKEN_KEY);sessionStorage.removeItem(LOCAL_PIN_KEY);setState("setup");}} style={{ padding:10,border:`1px solid rgba(244,91,105,0.3)`,borderRadius:10,background:"rgba(244,91,105,0.08)",color:C.danger,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
+            <label style={{ padding:10,border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.text,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8,textAlign:"center" }}>
+              <I d={ic.upload} s={16} c={C.blue} /> Backup wiederherstellen
+              <input type="file" accept=".json" style={{display:"none"}} onChange={async(ev)=>{
+                const file = ev.target.files?.[0];
+                if (!file) return;
+                try {
+                  const data = await importJSON(file);
+                  const merged = [...data.entries];
+                  const existingIds = new Set(entries.map(e=>e.id));
+                  const newOnly = merged.filter(e=>!existingIds.has(e.id));
+                  if (newOnly.length === 0 && merged.length <= entries.length) {
+                    if (confirm(`Backup enthält ${merged.length} Einträge. Aktuelle Daten (${entries.length} Einträge) komplett ersetzen?`)) {
+                      const nl = [...new Set([...data.locations, ...locations])].sort();
+                      setEntries(merged); setLocations(nl); dSave(merged, nl);
+                      alert(`Wiederhergestellt: ${merged.length} Einträge`);
+                    }
+                  } else {
+                    const ne = [...entries, ...newOnly].sort((a,b) => new Date(b.date) - new Date(a.date));
+                    const nl = [...new Set([...data.locations, ...locations])].sort();
+                    setEntries(ne); setLocations(nl); dSave(ne, nl);
+                    alert(`${newOnly.length} neue Einträge hinzugefügt (${ne.length} total)`);
+                  }
+                } catch (err) { alert("Fehler: " + err); }
+                ev.target.value = "";
+              }} />
+            </label>
+            <p style={{ fontSize:12,fontWeight:600,color:C.textDim,margin:"8px 0 0",textTransform:"uppercase",letterSpacing:"0.05em" }}>System</p>
+            <button onClick={()=>{localStorage.removeItem(LOCAL_TOKEN_KEY);setState("setup");}} style={{ padding:10,border:`1px solid rgba(244,91,105,0.3)`,borderRadius:10,background:"rgba(244,91,105,0.08)",color:C.danger,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
               Verbindung zurücksetzen
             </button>
           </div>
