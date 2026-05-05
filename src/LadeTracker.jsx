@@ -204,14 +204,16 @@ export default function LadeTracker() {
   // ─── Auto-update check ───
   useEffect(() => {
     const STORED_VERSION_KEY = "ev-app-version";
+    let initialVersion = null;
     const checkUpdate = async () => {
       try {
         const res = await fetch("version.json?t=" + Date.now());
         if (!res.ok) return;
         const data = await res.json();
-        const current = localStorage.getItem(STORED_VERSION_KEY);
-        if (!current) { localStorage.setItem(STORED_VERSION_KEY, data.version); return; }
-        if (data.version !== current) { setUpdateAvailable(true); }
+        // First check after page load: save version, no banner
+        if (!initialVersion) { initialVersion = data.version; localStorage.setItem(STORED_VERSION_KEY, data.version); return; }
+        // Subsequent checks: compare with version we loaded with
+        if (data.version !== initialVersion) { setUpdateAvailable(true); }
       } catch {}
     };
     checkUpdate();
@@ -417,7 +419,7 @@ export default function LadeTracker() {
       {updateAvailable && (
         <div style={{ margin:"0 20px 12px",padding:"12px 16px",background:"rgba(91,141,239,0.12)",border:`1px solid rgba(91,141,239,0.3)`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10 }}>
           <span style={{ fontSize:13,color:C.blue,fontWeight:600 }}>Neue Version verfügbar</span>
-          <button onClick={()=>{localStorage.setItem("ev-app-version","updating");window.location.reload();}} style={{ padding:"8px 14px",border:"none",borderRadius:8,background:C.blue,color:"#fff",fontSize:12,fontWeight:700,fontFamily:font,cursor:"pointer",whiteSpace:"nowrap" }}>
+          <button onClick={()=>window.location.reload()} style={{ padding:"8px 14px",border:"none",borderRadius:8,background:C.blue,color:"#fff",fontSize:12,fontWeight:700,fontFamily:font,cursor:"pointer",whiteSpace:"nowrap" }}>
             Jetzt aktualisieren
           </button>
         </div>
