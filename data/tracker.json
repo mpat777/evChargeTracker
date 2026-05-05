@@ -1,6 +1,17 @@
 {
   "entries": [
     {
+      "id": 1777999416806,
+      "km": 20292,
+      "kwh": 6.28,
+      "price": 2.4,
+      "location": "Migros",
+      "user": "Eveline",
+      "date": "2026-05-05",
+      "notes": "",
+      "pricePerKwh": 0.38216560509554137
+    },
+    {
       "id": 1777957043314,
       "km": 20212,
       "kwh": 23,
@@ -13,6 +24,7 @@
     }
   ],
   "locations": [
+    "Migros",
     "Thoemus Oberried"
   ]
 }
