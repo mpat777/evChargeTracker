@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "id": 1777957043314,
+      "km": 20212,
+      "kwh": 23,
+      "price": 0,
+      "location": "Thoemus Oberried",
+      "user": "Patrick",
+      "date": "2026-05-05",
+      "notes": "",
+      "pricePerKwh": 0
+    }
+  ],
+  "locations": [
+    "Thoemus Oberried"
+  ]
+}
