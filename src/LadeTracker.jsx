@@ -7,9 +7,10 @@ const LOCAL_NAMES_KEY = "ev-user-names";
 
 // ─── GitHub DB ───
 class GitHubDB {
-  constructor(token, repo) {
+  constructor(token, repo, password) {
     this.token = token;
     this.repo = repo;
+    this.password = password;
     this.sha = null;
     this.baseUrl = `https://api.github.com/repos/${repo}/contents/${GITHUB_FILE}`;
   }
@@ -22,14 +23,22 @@ class GitHubDB {
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const json = await res.json();
       this.sha = json.sha;
-      return JSON.parse(atob(json.content));
+      const raw = atob(json.content);
+      // Try encrypted first, fall back to plain JSON
+      try {
+        return await decryptData(raw.trim(), this.password);
+      } catch {
+        // Might be old unencrypted data
+        return JSON.parse(raw);
+      }
     } catch (e) { console.error("DB read:", e); return null; }
   }
   async write(data) {
     try {
+      const encrypted = await encryptData(data, this.password);
       const body = {
         message: `Update ${new Date().toISOString()}`,
-        content: btoa(unescape(encodeURIComponent(JSON.stringify(data, null, 2)))),
+        content: btoa(encrypted),
       };
       if (this.sha) body.sha = this.sha;
       const res = await fetch(this.baseUrl, {
@@ -56,7 +65,37 @@ class GitHubDB {
   }
 }
 
-// ─── Icons ───
+// ─── Encryption (AES-GCM) ───
+const LOCAL_ENC_KEY = "ev-enc-key";
+
+async function deriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name:"PBKDF2", salt, iterations:100000, hash:"SHA-256" }, keyMaterial, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]);
+}
+
+async function encryptData(data, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const enc = new TextEncoder();
+  const encrypted = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, enc.encode(JSON.stringify(data)));
+  const buf = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+  buf.set(salt, 0);
+  buf.set(iv, salt.length);
+  buf.set(new Uint8Array(encrypted), salt.length + iv.length);
+  return btoa(String.fromCharCode(...buf));
+}
+
+async function decryptData(base64, password) {
+  const raw = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  const salt = raw.slice(0, 16);
+  const iv = raw.slice(16, 28);
+  const data = raw.slice(28);
+  const key = await deriveKey(password, salt);
+  const decrypted = await crypto.subtle.decrypt({ name:"AES-GCM", iv }, key, data);
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
 const I = ({ d, s = 20, c = "currentColor" }) => (
   <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
 );
@@ -89,8 +128,8 @@ const font = "'DM Sans', 'Segoe UI', system-ui, sans-serif";
 const mono = "'JetBrains Mono', 'Fira Code', monospace";
 
 function exportCSV(entries) {
-  const h = "Datum;Benutzer;Kilometerstand;kWh;Preis (CHF);CHF/kWh;Ladestation;Notizen";
-  const r = entries.map(e => [e.date,e.user,e.km,e.kwh.toFixed(1),e.price.toFixed(2),e.pricePerKwh.toFixed(2),`"${e.location}"`,`"${e.notes||""}"`].join(";"));
+  const h = "Datum;Benutzer;Kilometerstand;kWh;Von %;Bis %;Preis (CHF);CHF/kWh;Ladestation;Notizen";
+  const r = entries.map(e => [e.date,e.user,e.km,e.kwh.toFixed(1),e.socFrom!=null?e.socFrom:"",e.socTo!=null?e.socTo:"",e.price.toFixed(2),e.pricePerKwh.toFixed(2),`"${e.location}"`,`"${e.notes||""}"`].join(";"));
   const blob = new Blob(["\uFEFF"+[h,...r].join("\n")], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
   a.download = `evChargeTracker-${new Date().toISOString().slice(0,10)}.csv`; a.click();
@@ -124,15 +163,16 @@ const btnP = { width:"100%", padding:"16px", background:`linear-gradient(135deg,
 
 // ═══ SETUP ═══
 function Setup({ onDone }) {
-  const [token, setToken] = useState(""); const [repo, setRepo] = useState("");
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); const [show, setShow] = useState(false);
+  const [token, setToken] = useState(""); const [repo, setRepo] = useState(""); const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); const [show, setShow] = useState(false); const [showPw, setShowPw] = useState(false);
   const go = async () => {
-    if (!token.trim()||!repo.trim()) return; setBusy(true); setErr("");
+    if (!token.trim()||!repo.trim()||!password.trim()) return; setBusy(true); setErr("");
     try {
       const r = await fetch(`https://api.github.com/repos/${repo.trim()}`, { headers:{Authorization:`Bearer ${token.trim()}`} });
       if (!r.ok) throw new Error(r.status===404?"Repo nicht gefunden":`Fehler ${r.status}`);
       localStorage.setItem(LOCAL_TOKEN_KEY, JSON.stringify({token:token.trim(),repo:repo.trim()}));
-      onDone(token.trim(), repo.trim());
+      localStorage.setItem(LOCAL_ENC_KEY, password.trim());
+      onDone(token.trim(), repo.trim(), password.trim());
     } catch(e) { setErr(e.message); } finally { setBusy(false); }
   };
   return (
@@ -161,6 +201,16 @@ function Setup({ onDone }) {
             </div>
             <p style={{ fontSize:11, color:C.textDim, marginTop:4 }}>GitHub → Settings → Developer Settings → Fine-grained tokens → Berechtigung: Contents Read & Write</p>
           </div>
+          <div>
+            <label style={lbl}>Verschlüsselungspasswort</label>
+            <div style={{ position:"relative" }}>
+              <input type={showPw?"text":"password"} placeholder="Gemeinsames Passwort" value={password} onChange={e=>setPassword(e.target.value)} style={{...inp,paddingRight:44}} />
+              <button onClick={()=>setShowPw(!showPw)} style={{ position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",border:"none",background:"transparent",cursor:"pointer",padding:6 }}>
+                <I d={showPw?ic.eyeOff:ic.eye} s={18} c={C.textDim} />
+              </button>
+            </div>
+            <p style={{ fontSize:11, color:C.textDim, marginTop:4 }}>Daten werden damit verschlüsselt. Auf beiden Geräten dasselbe Passwort verwenden!</p>
+          </div>
           {err && <div style={{ padding:"12px 16px", background:"rgba(244,91,105,0.1)", borderRadius:10, color:C.danger, fontSize:13 }}>{err}</div>}
           <button onClick={go} disabled={busy} style={{...btnP, opacity:busy?0.6:1}}>{busy?"Verbinde...":"Verbinden & Weiter"}</button>
         </div>
@@ -187,7 +237,7 @@ export default function LadeTracker() {
   const [editingNames, setEditingNames] = useState(false);
   const [nameInputs, setNameInputs] = useState(["",""]);
   const savedUser = localStorage.getItem(LOCAL_USER_KEY) || userNames[0];
-  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:"" });
+  const [form, setForm] = useState({ km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:"",socFrom:"",socTo:"" });
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [formError, setFormError] = useState("");
   const [editId, setEditId] = useState(null);
@@ -223,14 +273,18 @@ export default function LadeTracker() {
 
   useEffect(() => {
     const s = localStorage.getItem(LOCAL_TOKEN_KEY);
-    if (!s) { setState("setup"); return; }
+    const pw = localStorage.getItem(LOCAL_ENC_KEY);
+    if (!s || !pw) { setState("setup"); return; }
     try {
       const {token,repo} = JSON.parse(s);
-      const d = new GitHubDB(token,repo); setDb(d);
+      const d = new GitHubDB(token,repo,pw); setDb(d);
       d.read().then(data => {
         if (data) { setEntries(data.entries||[]); setLocations(data.locations||[]); }
         setLastSync(new Date());
         setState("app");
+      }).catch(() => {
+        // Wrong password or corrupted data
+        setState("setup");
       });
     } catch { setState("setup"); }
   }, []);
@@ -257,7 +311,7 @@ export default function LadeTracker() {
     if (missing.length > 0) { setFormError("Bitte ausfüllen: " + missing.join(", ")); return; }
     setFormError("");
     const priceVal = form.price ? parseFloat(form.price) : 0;
-    const entryData = { km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:priceVal, location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:priceVal > 0 ? priceVal/parseFloat(form.kwh) : 0 };
+    const entryData = { km:parseFloat(form.km), kwh:parseFloat(form.kwh), price:priceVal, location:loc, user:form.user, date:form.date, notes:form.notes.trim(), pricePerKwh:priceVal > 0 ? priceVal/parseFloat(form.kwh) : 0, socFrom:form.socFrom?parseInt(form.socFrom):null, socTo:form.socTo?parseInt(form.socTo):null };
 
     let nl = locations;
     if (!locations.includes(loc)) { nl=[...locations,loc].sort(); setLocations(nl); }
@@ -271,12 +325,12 @@ export default function LadeTracker() {
     }
     setEntries(ne); dSave(ne, nl);
     localStorage.setItem(LOCAL_USER_KEY, form.user);
-    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:form.user,date:new Date().toISOString().slice(0,10),notes:""});
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:form.user,date:new Date().toISOString().slice(0,10),notes:"",socFrom:"",socTo:""});
     setShowNewLoc(false); setView("list");
   };
 
   const startEdit = (e) => {
-    setForm({ km:String(e.km), kwh:String(e.kwh), price:e.price>0?String(e.price):"", location:e.location, newLocation:"", user:e.user, date:e.date, notes:e.notes||"" });
+    setForm({ km:String(e.km), kwh:String(e.kwh), price:e.price>0?String(e.price):"", location:e.location, newLocation:"", user:e.user, date:e.date, notes:e.notes||"", socFrom:e.socFrom!=null?String(e.socFrom):"", socTo:e.socTo!=null?String(e.socTo):"" });
     setEditId(e.id);
     setShowNewLoc(false);
     setFormError("");
@@ -285,7 +339,7 @@ export default function LadeTracker() {
 
   const cancelEdit = () => {
     setEditId(null);
-    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:""});
+    setForm({km:"",kwh:"",price:"",location:"",newLocation:"",user:savedUser,date:new Date().toISOString().slice(0,10),notes:"",socFrom:"",socTo:""});
     setFormError("");
     setView("list");
   };
@@ -304,7 +358,7 @@ export default function LadeTracker() {
   }, [entries]);
 
   if (state==="loading") return <div style={{minHeight:"100dvh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:C.accent,fontSize:18,fontFamily:font}}>Laden...</div></div>;
-  if (state==="setup") return <Setup onDone={(t,r)=>{const d=new GitHubDB(t,r);setDb(d);d.read().then(data=>{if(data){setEntries(data.entries||[]);setLocations(data.locations||[]);}setLastSync(new Date());setState("app");});}} />;
+  if (state==="setup") return <Setup onDone={(t,r,pw)=>{const d=new GitHubDB(t,r,pw);setDb(d);d.read().then(data=>{if(data){setEntries(data.entries||[]);setLocations(data.locations||[]);}setLastSync(new Date());setState("app");});}} />;
 
   return (
     <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:font, color:C.text, maxWidth:480, margin:"0 auto", paddingBottom:100 }}>
@@ -408,7 +462,7 @@ export default function LadeTracker() {
               }} />
             </label>
             <p style={{ fontSize:12,fontWeight:600,color:C.textDim,margin:"8px 0 0",textTransform:"uppercase",letterSpacing:"0.05em" }}>System</p>
-            <button onClick={()=>{localStorage.removeItem(LOCAL_TOKEN_KEY);setState("setup");}} style={{ padding:10,border:`1px solid rgba(244,91,105,0.3)`,borderRadius:10,background:"rgba(244,91,105,0.08)",color:C.danger,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
+            <button onClick={()=>{localStorage.removeItem(LOCAL_TOKEN_KEY);localStorage.removeItem(LOCAL_ENC_KEY);setState("setup");}} style={{ padding:10,border:`1px solid rgba(244,91,105,0.3)`,borderRadius:10,background:"rgba(244,91,105,0.08)",color:C.danger,fontSize:13,fontFamily:font,cursor:"pointer",fontWeight:600 }}>
               Verbindung zurücksetzen
             </button>
           </div>
@@ -479,6 +533,21 @@ export default function LadeTracker() {
               )}
             </div>
             <div><label style={lbl}>Geladene kWh</label><input type="number" inputMode="decimal" step="0.1" placeholder="z.B. 42.5" value={form.kwh} onChange={e=>setForm({...form,kwh:e.target.value})} style={inp} /></div>
+            <div>
+              <label style={lbl}>Ladestand (optional)</label>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{flex:1,position:"relative"}}>
+                  <input type="number" inputMode="numeric" min="0" max="100" placeholder="Von %" value={form.socFrom} onChange={e=>setForm({...form,socFrom:e.target.value})} style={inp} />
+                </div>
+                <span style={{color:C.textDim,fontSize:18,fontWeight:700}}>→</span>
+                <div style={{flex:1,position:"relative"}}>
+                  <input type="number" inputMode="numeric" min="0" max="100" placeholder="Bis %" value={form.socTo} onChange={e=>setForm({...form,socTo:e.target.value})} style={inp} />
+                </div>
+              </div>
+              {form.socFrom && form.socTo && parseInt(form.socTo) > parseInt(form.socFrom) && (
+                <div style={{marginTop:6,fontSize:13,color:C.blue,fontFamily:mono,fontWeight:500}}>+{parseInt(form.socTo) - parseInt(form.socFrom)}% geladen</div>
+              )}
+            </div>
             <div>
               <label style={lbl}>Bezahlter Preis in CHF (leer = gratis)</label>
               <input type="number" inputMode="decimal" step="0.01" placeholder="z.B. 18.50 (leer = gratis)" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} style={inp} />
@@ -560,7 +629,10 @@ export default function LadeTracker() {
                       <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>kWh</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,color:C.accent,marginTop:2}}>{e.kwh.toFixed(1)}</div></div>
                       <div><div style={{fontSize:10,color:C.textDim,fontWeight:600,textTransform:"uppercase"}}>Preis</div><div style={{fontSize:15,fontWeight:700,fontFamily:mono,color:e.price>0?C.orange:C.accent,marginTop:2}}>{e.price>0?`${e.price.toFixed(2)} CHF`:"Gratis"}</div></div>
                     </div>
-                    <div style={{fontSize:11,color:C.textDim,marginTop:6,fontFamily:mono}}>{e.pricePerKwh>0?`${e.pricePerKwh.toFixed(2)} CHF/kWh`:"Kostenlos geladen"}</div>
+                    <div style={{fontSize:11,color:C.textDim,marginTop:6,fontFamily:mono}}>
+                      {e.pricePerKwh>0?`${e.pricePerKwh.toFixed(2)} CHF/kWh`:"Kostenlos geladen"}
+                      {e.socFrom!=null && e.socTo!=null && <span style={{marginLeft:8,color:C.blue}}>⚡ {e.socFrom}% → {e.socTo}%</span>}
+                    </div>
                     {e.notes && <div style={{fontSize:12,color:C.textDim,marginTop:6,fontStyle:"italic"}}>{e.notes}</div>}
                   </div>
                 ))}
