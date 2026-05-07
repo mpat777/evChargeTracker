@@ -631,8 +631,32 @@ export default function LadeTracker() {
                     </div>
                     <div style={{fontSize:11,color:C.textDim,marginTop:6,fontFamily:mono}}>
                       {e.pricePerKwh>0?`${e.pricePerKwh.toFixed(2)} CHF/kWh`:"Kostenlos geladen"}
-                      {e.socFrom!=null && e.socTo!=null && <span style={{marginLeft:8,color:C.blue}}>⚡ {e.socFrom}% → {e.socTo}%</span>}
                     </div>
+                    {e.socFrom!=null && e.socTo!=null && (
+                      <div style={{marginTop:10,padding:"10px 12px",background:C.input,borderRadius:10}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                          <span style={{fontSize:11,fontFamily:mono,fontWeight:700,color:C.textDim}}>{e.socFrom}%</span>
+                          <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>+{e.socTo - e.socFrom}%</span>
+                          <span style={{fontSize:11,fontFamily:mono,fontWeight:700,color:C.accent}}>{e.socTo}%</span>
+                        </div>
+                        <div style={{width:"100%",height:14,background:C.border,borderRadius:7,overflow:"hidden",position:"relative"}}>
+                          {/* Filled from 0 to socFrom (dimmed = already had) */}
+                          <div style={{
+                            position:"absolute",left:0,top:0,
+                            width:`${e.socFrom}%`,height:"100%",
+                            background:"rgba(62,207,142,0.15)",borderRadius:"7px 0 0 7px",
+                          }} />
+                          {/* Filled from socFrom to socTo (bright green = charged) */}
+                          <div style={{
+                            position:"absolute",left:`${e.socFrom}%`,top:0,
+                            width:`${e.socTo - e.socFrom}%`,height:"100%",
+                            background:`linear-gradient(90deg, ${C.accent}, #2ECC71)`,
+                            borderRadius: e.socFrom === 0 ? "7px 0 0 7px" : 0,
+                            boxShadow:`0 0 8px ${C.accentGlow}`,
+                          }} />
+                        </div>
+                      </div>
+                    )}
                     {e.notes && <div style={{fontSize:12,color:C.textDim,marginTop:6,fontStyle:"italic"}}>{e.notes}</div>}
                   </div>
                 ))}
